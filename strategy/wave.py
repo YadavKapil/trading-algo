@@ -556,10 +556,6 @@ class WaveStrategy:
         restrict_buy = restrictions.get(symbol_type, {}).get("buy") == "no"
         restrict_sell = restrictions.get(symbol_type, {}).get("sell") == "no"
         
-        if not (restrict_buy or restrict_sell):
-            logger.info("No new restrictions apply. Active orders are safe.")
-            return
-
         try:
             # Some State variables to track
             sell_order_present = False
@@ -636,6 +632,8 @@ class WaveStrategy:
                             self.add_order_to_list(sell_order_id, final_sell_price, final_sell_qty, "SELL", symbol, -1)
                             if not self.handle_order_update_call_tracker[sell_order_id]:
                                 self.handle_order_update(self.handle_order_update_call_tracker_response_dict[sell_order_id])
+
+                        sell_order_present = sell_order_id != -1
                 else:
                     logger.critical("No previous wave sell price found. This should not happen.")
 
@@ -659,7 +657,7 @@ class WaveStrategy:
                             if not self.handle_order_update_call_tracker[buy_order_id]:
                                 self.handle_order_update(self.handle_order_update_call_tracker_response_dict[buy_order_id])
                         else:
-                            self.add_order_to_list(buy_order_id, final_buy_price, self.final_quantity, "BUY", symbol, -1)
+                            self.add_order_to_list(buy_order_id, final_buy_price, final_quantity, "BUY", symbol, -1)
                             if not self.handle_order_update_call_tracker[buy_order_id]:
                                 self.handle_order_update(self.handle_order_update_call_tracker_response_dict[buy_order_id])
                 else:
@@ -723,7 +721,7 @@ class WaveStrategy:
                         
         # Handle associated order cancellation
         associated_order_id = order_info.get('associated_order')
-        if associated_order_id:
+        if associated_order_id not in (None, -1):
             try:
                 self.broker.cancel_order(order_id=associated_order_id)
                 logger.info(f"Cancelled associated order {associated_order_id}")
@@ -1436,4 +1434,3 @@ PARAMETER GROUPS:
         sys.exit(1)
     finally:
         logger.info("STRATEGY SHUTDOWN COMPLETE")
-
