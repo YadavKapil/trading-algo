@@ -27,6 +27,7 @@ class WaveStrategyOrderRestorationTests(unittest.TestCase):
         self.strategy.orders = {}
         self.strategy.handle_order_update_call_tracker = {}
         self.strategy.handle_order_update_call_tracker_response_dict = {}
+        self.strategy.orders_pending_pairing = set()
         self.strategy.order_tracker = Mock()
         self.strategy.broker = Mock()
         self.strategy._get_symbol_restrictions = Mock(
@@ -108,6 +109,85 @@ class WaveStrategyOrderRestorationTests(unittest.TestCase):
         self.strategy._complete_order("sell-1")
 
         self.strategy.broker.cancel_order.assert_not_called()
+
+    def test_sell_completion_waits_until_buy_is_linked(self):
+        self.strategy.sell_quantity = 75
+        self.strategy.buy_quantity = 75
+        self.strategy.place_wave_order = Mock()
+        self.strategy.handle_order_update = WaveStrategy.handle_order_update.__get__(
+            self.strategy,
+            WaveStrategy,
+        )
+
+        def place_order(request):
+            if request.transaction_type == TransactionType.SELL:
+                self.strategy.handle_order_update(
+                    {
+                        "order_id": "sell-1",
+                        "tradingsymbol": "NIFTY26OCT25000CE",
+                        "tag": self.strategy.tag,
+                        "status": "COMPLETE",
+                    }
+                )
+                return SimpleNamespace(order_id="sell-1")
+            return SimpleNamespace(order_id="buy-1")
+
+        self.strategy.broker.place_order.side_effect = place_order
+
+        self.strategy._execute_orders(
+            "NIFTY26OCT25000CE",
+            final_buy_price=90,
+            final_sell_price=110,
+            restrict_buy_order=0,
+            restrict_sell_order=0,
+        )
+
+        self.strategy.broker.cancel_order.assert_called_once_with(order_id="buy-1")
+
+    def test_live_sell_completion_is_deferred_during_pairing(self):
+        self.strategy.sell_quantity = 75
+        self.strategy.buy_quantity = 75
+        self.strategy.place_wave_order = Mock()
+        self.strategy.handle_order_update = WaveStrategy.handle_order_update.__get__(
+            self.strategy,
+            WaveStrategy,
+        )
+        order_ids = iter(("sell-1", "buy-1"))
+        self.strategy.broker.place_order.side_effect = lambda request: SimpleNamespace(
+            order_id=next(order_ids)
+        )
+        add_order_to_list = self.strategy.add_order_to_list
+
+        def add_order(order_id, price, quantity, transaction_type, symbol, associated_order_id):
+            add_order_to_list(
+                order_id,
+                price,
+                quantity,
+                transaction_type,
+                symbol,
+                associated_order_id,
+            )
+            if order_id == "sell-1" and associated_order_id == -1:
+                self.strategy.handle_order_update(
+                    {
+                        "order_id": "sell-1",
+                        "tradingsymbol": symbol,
+                        "tag": self.strategy.tag,
+                        "status": "COMPLETE",
+                    }
+                )
+
+        self.strategy.add_order_to_list = add_order
+
+        self.strategy._execute_orders(
+            "NIFTY26OCT25000CE",
+            final_buy_price=90,
+            final_sell_price=110,
+            restrict_buy_order=0,
+            restrict_sell_order=0,
+        )
+
+        self.strategy.broker.cancel_order.assert_called_once_with(order_id="buy-1")
 
 
 if __name__ == "__main__":
