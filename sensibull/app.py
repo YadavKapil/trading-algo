@@ -1,8 +1,16 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, redirect, url_for
 import sqlite3
 import json
+import logging
 from datetime import datetime, timedelta
 from database import get_db, sync_profiles
+from live_dashboard import (
+    DEFAULT_PROFILE_SLUG,
+    get_live_dashboard_data,
+    get_event_evidence,
+    init_live_tables,
+    start_live_collector,
+)
 import sys
 import os
 import threading
@@ -10,6 +18,7 @@ import time
 import subprocess
 
 app = Flask(__name__)
+init_live_tables()
 # Configure standard port or 5010 as per previous context
 PORT = 6060
 
@@ -113,6 +122,11 @@ def monitor_scraper():
 
 @app.route('/')
 def index():
+    return redirect(url_for('live_dashboard'))
+
+
+@app.route('/tracker')
+def tracker_dashboard():
     # Sync profiles from file on every refresh
     sync_profiles()
     
@@ -186,6 +200,32 @@ def index():
 
     conn.close()
     return render_template('index.html', profiles=profiles, dates=dates, matrix=matrix, last_updated=last_updated, scraper_error=scraper_error)
+
+
+@app.route('/live')
+def live_dashboard():
+    return render_template(
+        'live_dashboard.html',
+        slug=request.args.get('slug', DEFAULT_PROFILE_SLUG),
+    )
+
+
+@app.route('/api/live')
+def api_live_dashboard():
+    slug = request.args.get('slug', DEFAULT_PROFILE_SLUG)
+    day = request.args.get('date')
+    try:
+        return jsonify(get_live_dashboard_data(slug=slug, day=day))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+
+@app.route('/api/live/evidence/<int:event_id>')
+def api_live_evidence(event_id):
+    evidence = get_event_evidence(event_id)
+    if evidence is None:
+        return jsonify({'error': 'Event not found'}), 404
+    return jsonify(evidence)
 
 def calculate_snapshot_pnl(c, snapshot_id):
     snap = c.execute("SELECT * FROM snapshots WHERE id = ?", (snapshot_id,)).fetchone()
@@ -535,6 +575,6 @@ def delete_date(date):
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    # Start monitor thread
-    threading.Thread(target=monitor_scraper, daemon=True).start()
-    app.run(debug=False, host='0.0.0.0', port=PORT)
+    logging.basicConfig(level=logging.INFO)
+    start_live_collector()
+    app.run(debug=False, host='127.0.0.1', port=PORT)

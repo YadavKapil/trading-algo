@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trade audit | Sensibull</title>
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101318; color: #e8eaed; }
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 18px; }
+        h1 { margin: 0; font-size: 24px; } h2 { margin: 0 0 10px; font-size: 18px; }
+        header, .toolbar, .cards { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
+        header { justify-content: space-between; }
+        .muted, .note { color: #a4adb8; font-size: 13px; line-height: 1.6; }
+        .note { margin: 8px 0; } .status { font-size: 12px; max-width: 650px; }
+        .panel, .card { background: #171b22; border: 1px solid #303741; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+        .card { flex: 1; min-width: 160px; margin: 0; } .card strong { display: block; font-size: 22px; }
+        button, select, input { font: inherit; border: 1px solid #465364; background: #222b38; color: inherit; padding: 6px 10px; border-radius: 4px; }
+        button { cursor: pointer; } button:hover { background: #34445a; }
+        input[type=checkbox] { accent-color: #54b0ff; } label { font-size: 13px; }
+        .buy { color: #67dbab; } .sell, .error { color: #ff8e88; }
+        .warning { color: #edc36a; } .link { background: none; border: 0; padding: 0; color: #7ec5ff; text-align: left; }
+        #chart-wrap { position: relative; height: 480px; }
+        #chart { width: 100%; height: 100%; }
+        #windows { position: absolute; inset: 0; pointer-events: none; }
+        .table-wrap { overflow: auto; max-height: 470px; }
+        table { border-collapse: collapse; width: 100%; font-size: 12px; white-space: nowrap; }
+        th, td { padding: 9px; text-align: left; border-bottom: 1px solid #303741; }
+        th { position: sticky; top: 0; z-index: 1; background: #202733; }
+        tr.selected { background: #293d51; }
+        td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+        #request-error { display: none; } a { color: #7ec5ff; }
+        summary { cursor: pointer; }
+        @media (max-width: 700px) { body { padding: 8px; } #chart-wrap { height: 360px; } }
+    </style>
+</head>
+<body>
+    <header>
+        <div><h1>Trade audit</h1><div class="muted">Public Sensibull profile: {{ slug }} | read-only | all times IST</div></div>
+        <div id="status" class="status muted">Connecting...</div>
+    </header>
+    <div id="request-error" class="panel error" role="alert"></div>
+    <div class="toolbar">
+        <label>Session <select id="session"><option value="">Latest available</option></select></label>
+        <button id="latest">Latest session</button>
+        <label>Underlying <select id="underlying"><option value="NIFTY">NIFTY</option><option value="">All</option></select></label>
+        <label>Expiry <select id="expiry"><option value="">All</option></select></label>
+        <label>Instrument <input id="instrument" placeholder="Symbol or strike" type="search"></label>
+        <button id="clear">Clear filters</button>
+        <button id="export">Export ledger CSV</button>
+    </div>
+    <div id="cards" class="cards"></div>
+    <div class="panel">
+        <div class="toolbar">
+            <h2 style="margin:0">NIFTY 1-minute context</h2>
+            <button id="fit">Fit session</button>
+            <label><input id="show-windows" type="checkbox" checked> Detection windows</label>
+            <label><input id="show-labels" type="checkbox"> Marker quantities</label>
+            <label><input id="show-strikes" type="checkbox"> Open strike levels</label>
+        </div>
+        <div id="chart-wrap"><div id="chart"></div><canvas id="windows"></canvas></div>
+        <div id="chart-note" class="note"></div>
+        <div class="note">Green = net BUY, red = net SELL of the option, not of NIFTY.
+            A segment spans the prior source update to first local detection.
+            It is a timing window between two observed spot values, not the market path or an option execution price.
+            Click a ledger time to focus that window. Chart navigation stays fixed during refresh.</div>
+    </div>
+    <div class="panel">
+        <h2>Net position changes (not a broker trade book) <span id="event-count" class="muted"></span></h2>
+        <div class="note">Every row is a net quantity change between snapshots. Multiple fills can be combined;
+            a buy and sell between polls can cancel out and remain invisible. Quotes below are observed option LTP, not fill prices.</div>
+        <div class="table-wrap"><table>
+            <thead><tr><th>Previous source update</th><th>First detected</th><th>Instrument</th><th>Net action</th>
+                <th>Qty</th><th>Net position before / after</th><th>Change</th><th>Source update</th>
+                <th>Window</th><th>Spot before / after</th><th>Option quote</th><th>Evidence</th></tr></thead>
+            <tbody id="events"></tbody>
+        </table></div>
+        <details id="evidence-panel"><summary>Raw poll evidence for selected change</summary>
+            <pre id="evidence" style="white-space:pre-wrap">Click a row's Evidence button to inspect the two saved polls.</pre>
+        </details>
+    </div>
+    <div class="panel">
+        <h2>FIFO quantity allocations (not additional trades)</h2>
+        <div class="note">Matches opposite net changes in time order for the same instrument and product.
+            SHORT: sell then buy; LONG: buy then sell. FIFO is an audit convention, not the author's actual allocation.
+            Baseline inventory has unknown entry time. No execution P&amp;L is inferred.</div>
+        <div class="table-wrap"><table>
+            <thead><tr><th>Instrument</th><th>Direction</th><th>Matched / remaining qty</th><th>Opening / add-on change detected</th>
+                <th>Reducing / closing change detected</th><th>Detection elapsed</th><th>Status</th></tr></thead><tbody id="matches"></tbody>
+        </table></div>
+    </div>
+    <div class="panel">
+        <h2>Positions at selected snapshot <span id="position-count" class="muted"></span></h2>
+        <div id="snapshot-time" class="note"></div>
+        <div class="table-wrap"><table>
+            <thead><tr><th>Instrument</th><th>Side</th><th>Qty</th><th>Reported average</th><th>Option LTP</th>
+                <th>Reported total P&amp;L</th><th>Previous update (first change)</th><th>First detected change</th>
+                <th>Last detected change</th><th>Evidence</th></tr></thead><tbody id="positions"></tbody>
+        </table></div>
+    </div>
+    <div class="panel">
+        <h2>Strategy and signal research</h2>
+        <div id="research" class="note"></div>
+        <div class="table-wrap"><table>
+            <thead><tr><th>Underlying / expiry</th><th>Net PE sells (qty)</th><th>Net CE sells (qty)</th>
+                <th>Net buys (qty)</th><th>Sells aligned with prior snapshot movement</th></tr></thead>
+            <tbody id="instances"></tbody>
+        </table></div>
+        <p class="note">Alignment compares the two observed spot values only: PE selling with a rise,
+            CE selling with a fall. It does not test Survivor's hidden reference points and cannot identify the strategy.
+            No strategy is assigned to an individual trade from this statistic.</p>
+        <details><summary>What can and cannot be concluded</summary>
+            <p class="note">Survivor sells puts after upward reference-gap breaches and calls after downward breaches.
+                Analyse each underlying / expiry independently; checked-in defaults need not be active.
+                Source references, resets, configuration, tags and complete fills are not visible here.
+                Buybacks may be Wave, manual actions or other logic; inventory alone does not distinguish them.</p>
+            <p class="note">A short observed delay does not prove that copying the signal is safe or profitable.
+                Evaluate in paper replay at the first detection time plus additional delays, using independent option bid/ask history,
+                fees, slippage, liquidity, margin and every hedge leg. This logger has no historical executable option quotes:
+                it cannot calculate execution returns or validate timing insensitivity.
+                It never connects to a broker or places orders.</p>
+        </details>
+    </div>
+    <script>
+        const slug = {{ slug | tojson }};
+    </script>
+    <script src="{{ url_for('static', filename='trade_audit.js') }}"></script>
+</body>
+</html>

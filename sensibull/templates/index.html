@@ -58,6 +58,9 @@
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
             <h1>Sensibull Tracker Dashboard</h1>
+            <div style="margin-bottom: 10px;">
+                <a href="{{ url_for('live_dashboard') }}">Open NIFTY live chart</a>
+            </div>
             {% if last_updated %}
             <div style="color: #666; font-size: 0.9em; margin-top: -10px;">
                 Last Updated: {{ last_updated | to_datetime | attr('strftime')('%H:%M:%S') }}

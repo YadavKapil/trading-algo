@@ -2,3 +2,5 @@ flask
 requests
 apscheduler
 simplejson
+playwright
+tzdata
