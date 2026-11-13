@@ -3,7 +3,10 @@ import json
 from datetime import datetime
 import os
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sensibull.db')
+DB_PATH = os.getenv(
+    'SENSIBULL_DB_PATH',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sensibull.db')
+)
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
